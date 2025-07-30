@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,14 +15,18 @@ import {
   Alert,
 } from 'react-native';
 import RNSpeedometer from 'react-native-speedometer';
-import { useThemedStyles } from '../theme/ThemeContext';
+import { useThemedStyles, useTheme } from '../theme/ThemeContext';
 import { ThemeColors } from '../theme/colors';
 import DefectTypeDistribution from '../components/DefectTypeDistribution';
-import DefectsReopenedChart from '../components/DefectsReopenedChart';
 import DefectsByModuleChart from '../components/DefectsByModuleChart';
 import { getProjects, transformProjectsForApp, ProjectData, ProjectApiError, testNetworkConnectivity, checkApiHealth } from '../api/GetProject';
-import { getDefectDensity, DefectDensityData, DefectDensityError, mapDefectDensityToUI } from '../api/GetDefectDensity';
-import { getDefectToRemarkRatio, DefectToRemarkData, DefectToRemarkError, mapDefectToRemarkRatioToUI } from '../api/GetDefectToRemark';
+import { getDefectDensity, DefectDensityData, DefectDensityError, mapDefectDensityToUI, getDefectDensityColor } from '../api/GetDefectDensity';
+import { getDefectToRemarkRatio, DefectToRemarkData, DefectToRemarkError } from '../api/GetDefectToRemark';
+import { getSeveritySummary, SeveritySummaryData, SeveritySummaryApiError, getSeverityColor, getStatusColor as getApiStatusColor, getAvailableStatuses } from '../api/GetSeveritySummary';
+import { getDefectSeverityIndex, DefectSeverityIndexData, DefectSeverityIndexApiError, getDSIInterpretationColor, formatDSIForDisplay } from '../api/GetDefectSeverityIndex';
+import { getDefectTypeStatistics, DefectTypeData, DefectTypeApiError, formatDefectTypeForPieChart, getDefectTypeSummary } from '../api/GetDefectTypePieChart';
+import { getDefectModuleStatistics, DefectModuleItem, DefectModuleApiError, formatDefectModuleForPieChart, getDefectModuleSummary } from '../api/GetDefectModulePieChart';
+import { getProjectCardColor, ProjectCardColorData, ProjectCardColorApiError } from '../api/GetProjectCardColor';
 
 const { height } = Dimensions.get('window');
 
@@ -39,6 +43,7 @@ interface DefectDensityMeterProps {
   isLoading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  isDarkTheme?: boolean; // Add theme support for color matching
 }
 
 // DefectToRemarkRatio Component Interface
@@ -50,6 +55,7 @@ interface DefectToRemarkRatioProps {
   onRetry?: () => void;
   defaultDefects?: number;
   defaultRemarks?: number;
+  isDarkTheme?: boolean; // Add theme support for color matching
 }
 
 // DefectDensityMeter Component with KLOC calculation logic and API integration
@@ -60,7 +66,8 @@ const DefectDensityMeter: React.FC<DefectDensityMeterProps> = ({
   apiData,
   isLoading,
   error,
-  onRetry
+  onRetry,
+  isDarkTheme = false
 }) => {
   // Calculate defect density per KLOC (thousand lines of code) - fallback calculation
   const calculateDefectDensity = (defects: number, loc: number): number => {
@@ -71,37 +78,81 @@ const DefectDensityMeter: React.FC<DefectDensityMeterProps> = ({
   // Use API data if available, otherwise use local calculation
   const defectDensity = apiData ? apiData.defectDensity : calculateDefectDensity(totalDefects, totalLinesOfCode);
   const densityMeaning = apiData ? apiData.meaning : 'Calculated locally';
-  // Enhanced speedometer labels with old UI color mapping
+
+  console.log('📊 Defect Density Meter:', {
+    defectDensity: defectDensity,
+    range: '0-20',
+    meaning: densityMeaning,
+    source: apiData ? 'API' : 'Calculated',
+    colorRange: defectDensity < 7 ? 'Green (0-7)' : defectDensity < 10 ? 'Orange (7-10)' : 'Red (10-20)',
+    color: getDefectDensityColor(defectDensity, isDarkTheme),
+    note: 'Using same colors as Home screen project cards'
+  });
+  // Speedometer labels using EXACT same colors as Home screen project cards
+  // 🎨 COLOR MATCHING: 0-7 Green, 7-10 Orange, 10-20 Red (same as Home screen)
+  const getSpeedometerColor = (value: number, isDarkTheme: boolean) => {
+    if (value >= 0 && value < 7) {
+      // Green range (0-7) - same as Low Risk from Home screen
+      return isDarkTheme ? '#66BB6A' : '#22C55E';
+    } else if (value >= 7 && value < 10) {
+      // Orange range (7-10) - same as Medium Risk from Home screen
+      return isDarkTheme ? '#FF9800' : '#F59E0B';
+    } else {
+      // Red range (10-20) - same as High Risk from Home screen
+      return isDarkTheme ? '#EF5350' : '#EF4444';
+    }
+  };
+
   const speedometerLabels = [
     {
       name: '0',
-      labelColor: '#00ff6b', // Old Light Green
-      activeBarColor: '#00ff6b',
+      labelColor: getSpeedometerColor(0, isDarkTheme),
+      activeBarColor: getSpeedometerColor(0, isDarkTheme),
     },
     {
-      name: '3.5',
-      labelColor: '#14eb6e', // Old Dark Green
-      activeBarColor: '#14eb6e',
+      name: '2',
+      labelColor: getSpeedometerColor(2, isDarkTheme),
+      activeBarColor: getSpeedometerColor(2, isDarkTheme),
+    },
+    {
+      name: '4',
+      labelColor: getSpeedometerColor(4, isDarkTheme),
+      activeBarColor: getSpeedometerColor(4, isDarkTheme),
+    },
+    {
+      name: '6',
+      labelColor: getSpeedometerColor(6, isDarkTheme),
+      activeBarColor: getSpeedometerColor(6, isDarkTheme),
     },
     {
       name: '7',
-      labelColor: '#FFFF00', // Yellow
-      activeBarColor: '#FFFF00',
+      labelColor: getSpeedometerColor(7, isDarkTheme),
+      activeBarColor: getSpeedometerColor(7, isDarkTheme),
     },
     {
-      name: '8.5',
-      labelColor: '#FFA500', // Orange
-      activeBarColor: '#FFA500',
+      name: '8',
+      labelColor: getSpeedometerColor(8, isDarkTheme),
+      activeBarColor: getSpeedometerColor(8, isDarkTheme),
     },
     {
       name: '10',
-      labelColor: '#FF0000', // Red
-      activeBarColor: '#FF0000',
+      labelColor: getSpeedometerColor(10, isDarkTheme),
+      activeBarColor: getSpeedometerColor(10, isDarkTheme),
+    },
+    {
+      name: '12',
+      labelColor: getSpeedometerColor(12, isDarkTheme),
+      activeBarColor: getSpeedometerColor(12, isDarkTheme),
     },
     {
       name: '15',
-      labelColor: '#8B0000', // Dark Red
-      activeBarColor: '#8B0000',
+      labelColor: getSpeedometerColor(15, isDarkTheme),
+      activeBarColor: getSpeedometerColor(15, isDarkTheme),
+    },
+    {
+      name: '20',
+      labelColor: getSpeedometerColor(20, isDarkTheme),
+      activeBarColor: getSpeedometerColor(20, isDarkTheme),
     },
   ];
 
@@ -144,7 +195,7 @@ const DefectDensityMeter: React.FC<DefectDensityMeterProps> = ({
           size={200}
           defaultValue={3.5}
           minValue={0}
-          maxValue={15}
+          maxValue={20}
           easeDuration={500}
           labels={speedometerLabels}
           wrapperStyle={styles.speedometerWrapperStyle}
@@ -165,7 +216,7 @@ const DefectDensityMeter: React.FC<DefectDensityMeterProps> = ({
           <Text style={styles.klocDetailLabel}>Density:</Text>
           <Text style={[
             styles.densityResultValue,
-            { color: apiData ? mapDefectDensityToUI(defectDensity).uiColor : '#1F2937' }
+            { color: getDefectDensityColor(defectDensity, isDarkTheme) }
           ]}>
             {defectDensity.toFixed(1)}
           </Text>
@@ -175,7 +226,7 @@ const DefectDensityMeter: React.FC<DefectDensityMeterProps> = ({
           <Text style={styles.klocDetailLabel}>Status:</Text>
           <Text style={[
             styles.klocDetailValue,
-            { color: apiData ? mapDefectDensityToUI(defectDensity).uiColor : '#6B7280' }
+            { color: getDefectDensityColor(defectDensity, isDarkTheme) }
           ]}>
             {densityMeaning}
           </Text>
@@ -193,30 +244,49 @@ const DefectToRemarkRatio: React.FC<DefectToRemarkRatioProps> = ({
   error,
   onRetry,
   defaultDefects = 85,
-  defaultRemarks = 142
+  defaultRemarks = 142,
+  isDarkTheme = false
 }) => {
   // Use API data if available, otherwise use default values
   const defects = apiData ? apiData.defects : defaultDefects;
   const remarks = apiData ? apiData.remarks : defaultRemarks;
   const ratio = apiData ? apiData.ratio : `${((remarks / defects) * 100).toFixed(2)}%`;
   const category = apiData ? apiData.category : 'Medium';
-  const color = apiData ? apiData.color : 'Yellow';
 
   // Calculate ratio for display
   const ratioValue = defects > 0 ? (remarks / defects).toFixed(2) : '0.00';
 
-  // Get UI color based on category
-  const getCategoryColor = (cat: string) => {
+  // Get UI color based on category - USING SAME COLORS AS HOME SCREEN PROJECT STATUS
+  const getCategoryColor = (cat: string, isDarkTheme: boolean = false) => {
+    let color = '';
+
     switch (cat.toLowerCase()) {
       case 'low':
-        return '#00ff6b'; // Green
+        // Use same colors as Low Risk from Home screen
+        color = isDarkTheme ? '#66BB6A' : '#22C55E'; // Green (same as Home screen)
+        break;
       case 'medium':
-        return '#FFFF00'; // Yellow
+        // Use same colors as Medium Risk from Home screen
+        color = isDarkTheme ? '#FF9800' : '#F59E0B'; // Orange/Yellow (same as Home screen)
+        break;
       case 'high':
-        return '#FF0000'; // Red
+        // Use same colors as High Risk from Home screen
+        color = isDarkTheme ? '#EF5350' : '#EF4444'; // Red (same as Home screen)
+        break;
       default:
-        return '#FFFF00'; // Default to yellow
+        // Default to medium risk color
+        color = isDarkTheme ? '#FF9800' : '#F59E0B'; // Orange/Yellow
+        break;
     }
+
+    console.log('🎨 Defect to Remark Ratio color matching:', {
+      category: cat,
+      isDarkTheme: isDarkTheme,
+      selectedColor: color,
+      note: 'Using same colors as Home screen project status'
+    });
+
+    return color;
   };
 
   return (
@@ -281,23 +351,20 @@ const DefectToRemarkRatio: React.FC<DefectToRemarkRatioProps> = ({
       </View>
 
       {/* Ratio Summary */}
-      <View style={styles.ratioSummary}>
+      <View style={[
+        styles.ratioSummary,
+        { backgroundColor: getCategoryColor(category, isDarkTheme) }
+      ]}>
         <Text style={styles.ratioSummaryLabel}>Ratio</Text>
 
-        {/* Curved Rectangle with Color Background */}
-        <View style={[
-          styles.ratioValueContainer,
-          { backgroundColor: getCategoryColor(category) }
-        ]}>
+        {/* Curved Rectangle without Color Background */}
+        <View style={styles.ratioValueContainer}>
           <Text style={styles.ratioSummaryValue}>
             {ratio}
           </Text>
         </View>
 
-        <Text style={[
-          styles.ratioSummaryDescription,
-          { color: getCategoryColor(category) }
-        ]}>
+        <Text style={styles.ratioSummaryDescription}>
           Category: {category} Risk
         </Text>
         {apiData && (
@@ -340,6 +407,7 @@ interface ProjectDashboardProps {
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, onNavigateToProfile, onNavigateToSettings }) => {
   const styles = useThemedStyles(createStyles);
+  const { isDark } = useTheme(); // Move useTheme to top level to avoid hooks order violation
   const { projectId } = route.params;
   const [projects, setProjects] = useState<Project[]>([]);
   const [defects, setDefects] = useState<Defect[]>([]);
@@ -359,6 +427,31 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
   const [defectToRemarkData, setDefectToRemarkData] = useState<DefectToRemarkData | null>(null);
   const [isLoadingDefectToRemark, setIsLoadingDefectToRemark] = useState<boolean>(false);
   const [defectToRemarkError, setDefectToRemarkError] = useState<string | null>(null);
+
+  // Severity Summary API state
+  const [severitySummaryData, setSeveritySummaryData] = useState<SeveritySummaryData | null>(null);
+  const [isLoadingSeveritySummary, setIsLoadingSeveritySummary] = useState<boolean>(false);
+  const [severitySummaryError, setSeveritySummaryError] = useState<string | null>(null);
+
+  // Defect Severity Index API state
+  const [dsiData, setDsiData] = useState<DefectSeverityIndexData | null>(null);
+  const [isLoadingDSI, setIsLoadingDSI] = useState<boolean>(false);
+  const [dsiError, setDsiError] = useState<string | null>(null);
+
+  // Defect Type Pie Chart API state
+  const [defectTypeData, setDefectTypeData] = useState<DefectTypeData | null>(null);
+  const [isLoadingDefectType, setIsLoadingDefectType] = useState<boolean>(false);
+  const [defectTypeError, setDefectTypeError] = useState<string | null>(null);
+
+  // Defect Module Pie Chart API state
+  const [defectModuleData, setDefectModuleData] = useState<DefectModuleItem[] | null>(null);
+  const [isLoadingDefectModule, setIsLoadingDefectModule] = useState<boolean>(false);
+  const [defectModuleError, setDefectModuleError] = useState<string | null>(null);
+
+  // Project Card Color API state (same as Home screen)
+  const [projectCardColors, setProjectCardColors] = useState<{ [key: string]: ProjectCardColorData }>({});
+  const [isLoadingCardColors, setIsLoadingCardColors] = useState<boolean>(false);
+  const [cardColorsError, setCardColorsError] = useState<string | null>(null);
 
   // Function to fetch projects from API
   const fetchProjectsFromApi = async () => {
@@ -441,19 +534,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
         { text: 'Retry', onPress: fetchProjectsFromApi }
       ]);
 
-      // Fall back to mock data if API fails
-      console.log('📱 Falling back to mock data...');
-      const mockProjects = [
-        { id: 'proj-1', name: 'Defect Tracker', description: 'Main defect tracking system' },
-        { id: 'proj-2', name: 'QA Testing', description: 'Quality assurance testing' },
-        { id: 'proj-3', name: 'project 1', description: 'First project' },
-        { id: 'proj-4', name: 'project 2', description: 'Second project' },
-        { id: 'proj-5', name: 'project 3', description: 'Third project' },
-      ];
-      setProjects(mockProjects);
-      if (!selectedProject && mockProjects.length > 0) {
-        setSelectedProject(mockProjects[0]);
-      }
+      // No fallback - show error state instead
+      console.log('📱 API failed, showing error state...');
+      setProjects([]);
+      setSelectedProject(null);
     } finally {
       setIsLoadingProjects(false);
     }
@@ -641,6 +725,228 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
     }
   };
 
+  // Function to fetch severity summary data from API
+  const fetchSeveritySummaryFromApi = async (projectId: number) => {
+    setIsLoadingSeveritySummary(true);
+    setSeveritySummaryError(null);
+
+    try {
+      console.log('🚀 Starting to fetch severity summary from API...');
+      console.log('📊 Parameters - ProjectID:', projectId);
+      console.log('🌐 API Base URL: http://34.56.162.48:8087/api/v1');
+      console.log('📡 Full URL: http://34.56.162.48:8087/api/v1/dashboard/defect_severity_summary/' + projectId);
+
+      const summaryData = await getSeveritySummary(projectId);
+
+      console.log('✅ Successfully fetched severity summary:', summaryData.totalDefects, 'total defects');
+      console.log('📊 Severity summary data:', JSON.stringify(summaryData, null, 2));
+      setSeveritySummaryData(summaryData);
+
+      // Clear any previous errors
+      setSeveritySummaryError(null);
+
+    } catch (error) {
+      console.error('❌ Error fetching severity summary:', error);
+
+      let errorMessage = 'Unknown error occurred';
+
+      if (error instanceof SeveritySummaryApiError) {
+        errorMessage = `${error.apiStatus} (${error.statusCode}): ${error.message}`;
+
+        // Provide user-friendly messages for common errors
+        if (error.apiStatus === 'timeout_error') {
+          errorMessage = 'Request timeout. The server is taking too long to respond.';
+        } else if (error.apiStatus === 'network_error') {
+          errorMessage = 'Network connection failed. Please check your internet connection.';
+        } else if (error.apiStatus === 'project_not_found') {
+          errorMessage = 'Project not found. Please select a different project.';
+        } else if (error.apiStatus === 'parse_error') {
+          errorMessage = 'Server response format error. Please try again.';
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      } else {
+        errorMessage = 'Network error: Unable to connect to server';
+      }
+
+      setSeveritySummaryError(errorMessage);
+
+      // Log error for debugging
+      console.warn('⚠️ Severity summary API error:', errorMessage);
+      console.warn('⚠️ Full error details:', error);
+
+    } finally {
+      setIsLoadingSeveritySummary(false);
+    }
+  };
+
+  // Function to fetch defect severity index data from API
+  const fetchDSIFromApi = async (projectId: number) => {
+    setIsLoadingDSI(true);
+    setDsiError(null);
+
+    try {
+      console.log('🚀 Starting to fetch DSI from API...');
+      console.log('📊 Parameters - ProjectID:', projectId);
+
+      const dsiResponse = await getDefectSeverityIndex(projectId);
+
+      console.log('✅ Successfully fetched DSI:', dsiResponse.dsiPercentage + '%');
+      setDsiData(dsiResponse);
+
+    } catch (error) {
+      console.error('❌ Error fetching DSI:', error);
+
+      let errorMessage = 'Unknown error occurred';
+
+      if (error instanceof DefectSeverityIndexApiError) {
+        errorMessage = `${error.apiStatus} (${error.statusCode}): ${error.message}`;
+
+        if (error.apiStatus === 'no_defects_found') {
+          errorMessage = 'No defects found for this project';
+        } else if (error.apiStatus === 'network_error') {
+          errorMessage = 'Network connection failed. Please check your internet connection.';
+        } else if (error.apiStatus === 'timeout_error') {
+          errorMessage = 'Request timeout. Please try again.';
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      setDsiError(errorMessage);
+
+      // Log error for debugging
+      console.warn('⚠️ DSI API error:', errorMessage);
+
+    } finally {
+      setIsLoadingDSI(false);
+    }
+  };
+
+  // Function to fetch defect type statistics from API
+  const fetchDefectTypeFromApi = async (projectId: number) => {
+    setIsLoadingDefectType(true);
+    setDefectTypeError(null);
+
+    try {
+      console.log('🚀 Starting to fetch defect type data from API...');
+      console.log('📊 Parameters - ProjectID:', projectId);
+
+      const defectTypeResponse = await getDefectTypeStatistics(projectId);
+
+      console.log('✅ Successfully fetched defect type data:', defectTypeResponse.totalDefectCount, 'total defects');
+      setDefectTypeData(defectTypeResponse);
+
+    } catch (error) {
+      console.error('❌ Error fetching defect type data:', error);
+
+      let errorMessage = 'Unknown error occurred';
+
+      if (error instanceof DefectTypeApiError) {
+        errorMessage = `${error.apiStatus} (${error.statusCode}): ${error.message}`;
+
+        if (error.apiStatus === 'no_defects_found') {
+          errorMessage = 'No defects found for this project';
+        } else if (error.apiStatus === 'network_error') {
+          errorMessage = 'Network connection failed. Please check your internet connection.';
+        } else if (error.apiStatus === 'timeout_error') {
+          errorMessage = 'Request timeout. Please try again.';
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      setDefectTypeError(errorMessage);
+
+      // Log error for debugging
+      console.warn('⚠️ Defect Type API error:', errorMessage);
+
+    } finally {
+      setIsLoadingDefectType(false);
+    }
+  };
+
+  // Function to fetch defect module statistics from API
+  const fetchDefectModuleFromApi = async (projectId: number) => {
+    setIsLoadingDefectModule(true);
+    setDefectModuleError(null);
+
+    try {
+      console.log('🚀 Starting to fetch defect module data from API...');
+      console.log('📊 Parameters - ProjectID:', projectId);
+
+      const defectModuleResponse = await getDefectModuleStatistics(projectId);
+
+      console.log('✅ Successfully fetched defect module data:', defectModuleResponse.length, 'modules');
+      setDefectModuleData(defectModuleResponse);
+
+    } catch (error) {
+      console.error('❌ Error fetching defect module data:', error);
+
+      let errorMessage = 'Unknown error occurred';
+
+      if (error instanceof DefectModuleApiError) {
+        errorMessage = `${error.apiStatus} (${error.statusCode}): ${error.message}`;
+
+        if (error.apiStatus === 'no_defects_found') {
+          errorMessage = 'No defects found for the given project';
+        } else if (error.apiStatus === 'network_error') {
+          errorMessage = 'Network connection failed. Please check your internet connection.';
+        } else if (error.apiStatus === 'timeout_error') {
+          errorMessage = 'Request timeout. Please try again.';
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      setDefectModuleError(errorMessage);
+
+      // Log error for debugging
+      console.warn('⚠️ Defect Module API error:', errorMessage);
+
+    } finally {
+      setIsLoadingDefectModule(false);
+    }
+  };
+
+  // Fetch project card colors from API (same logic as Home screen)
+  const fetchProjectCardColors = async (projectIds: number[]) => {
+    if (projectIds.length === 0) return;
+
+    try {
+      setIsLoadingCardColors(true);
+      setCardColorsError(null);
+
+      console.log('🎨 Fetching project card colors for ProjectDashboard...', projectIds);
+
+      const newCardColors: { [key: string]: ProjectCardColorData } = {};
+
+      // Fetch colors for each project
+      await Promise.all(
+        projectIds.map(async (projectId) => {
+          try {
+            const colorData = await getProjectCardColor(projectId);
+            // Store with both string and numeric keys for compatibility
+            newCardColors[projectId.toString()] = colorData;
+            newCardColors[projectId] = colorData;
+          } catch (error) {
+            console.warn(`⚠️ Failed to fetch color for project ${projectId}:`, error);
+          }
+        })
+      );
+
+      console.log('✅ Project card colors loaded for ProjectDashboard:', Object.keys(newCardColors).length);
+      console.log('🎨 Card colors data:', JSON.stringify(newCardColors, null, 2));
+      setProjectCardColors(newCardColors);
+
+    } catch (error) {
+      console.error('❌ Error fetching project card colors:', error);
+      setCardColorsError('Failed to load project colors');
+    } finally {
+      setIsLoadingCardColors(false);
+    }
+  };
+
   // Animation values for fast 3D swipe with background visibility
   const translateX = useRef(new Animated.Value(0)).current;
   const rotateY = useRef(new Animated.Value(0)).current;
@@ -743,109 +1049,42 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
     },
   });
 
-  // Mock data
-  const mockProjects = [
-    { id: 'proj-1', name: 'Defect Tracker', description: 'Main defect tracking system' },
-    { id: 'proj-2', name: 'QA Testing', description: 'Quality assurance testing' },
-    { id: 'proj-3', name: 'project 1', description: 'First project' },
-    { id: 'proj-4', name: 'Heart', description: 'Heart monitoring system' },
-    { id: 'proj-5', name: 'Dashboard testing', description: 'Dashboard testing project' },
-    { id: 'proj-6', name: 'JALI', description: 'JALI project' },
-    { id: 'proj-7', name: 'Hello world', description: 'Hello world project' },
-    { id: 'proj-8', name: 'dashboard test', description: 'Dashboard test project' },
-  ];
+  // No mock data - all data comes from API
 
-  const mockDefects = [
-    // FUNCTIONALITY DEFECTS (Business Logic, Core Features)
-    { id: '1', projectId: 'proj-1', title: 'Login function not working', description: 'User authentication function fails to validate credentials properly', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-01', reopenCount: 2, module: 'employee' },
-    { id: '2', projectId: 'proj-1', title: 'Business logic error in payment', description: 'Payment calculation function returns incorrect amounts', severity: 'critical' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-01-02', reopenCount: 4, module: 'project' },
-    { id: '3', projectId: 'proj-1', title: 'Data processing function crash', description: 'Core data processing logic throws exceptions', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev3', createdAt: '2024-01-03', reopenCount: 3, module: 'project' },
-    { id: '4', projectId: 'proj-1', title: 'Search functionality broken', description: 'Search function returns no results even with valid queries', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev1', createdAt: '2024-01-04', reopenCount: 2, module: 'project' },
-    { id: '5', projectId: 'proj-1', title: 'Report generation logic error', description: 'Business report generation function produces incorrect data', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-01-05', reopenCount: 5, module: 'dashboard' },
-    { id: '6', projectId: 'proj-1', title: 'Workflow function incomplete', description: 'Business workflow logic missing critical steps', severity: 'low' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-01-06', module: 'projectManagement' },
-    { id: '7', projectId: 'proj-1', title: 'API function timeout', description: 'Core API function times out under normal load', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-07', reopenCount: 3, module: 'project' },
-    { id: '8', projectId: 'proj-1', title: 'Database function error', description: 'Database connection function fails intermittently', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev2', createdAt: '2024-01-08' },
+  // No mock defects - all defect data should come from API calls
 
-    // UI DEFECTS (Interface, Display, Layout)
-    { id: '9', projectId: 'proj-1', title: 'Button UI alignment issue', description: 'Submit button UI is misaligned on mobile interface', severity: 'low' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-01-09', reopenCount: 2, module: 'mainTemplate' },
-    { id: '10', projectId: 'proj-1', title: 'Interface display problem', description: 'User interface elements overlap on smaller screens', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-10', reopenCount: 4, module: 'mainTemplate' },
-    { id: '11', projectId: 'proj-1', title: 'Layout broken on tablet', description: 'UI layout completely broken on tablet interface', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-01-11', reopenCount: 6, module: 'mainTemplate' },
-    { id: '12', projectId: 'proj-1', title: 'Display rendering issue', description: 'Chart display renders incorrectly in dark mode UI', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev3', createdAt: '2024-01-12', module: 'dashboard' },
-    { id: '13', projectId: 'proj-1', title: 'Interface color scheme bug', description: 'UI color scheme inconsistent across different pages', severity: 'low' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-13', module: 'configurations' },
-    { id: '14', projectId: 'proj-1', title: 'UI navigation menu broken', description: 'Interface navigation menu does not respond to clicks', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev2', createdAt: '2024-01-14', module: 'mainTemplate' },
 
-    // USABILITY DEFECTS (User Experience, UX)
-    { id: '15', projectId: 'proj-1', title: 'Poor user experience flow', description: 'User experience is confusing during checkout process', severity: 'medium' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-01-15', module: 'employee' },
-    { id: '16', projectId: 'proj-1', title: 'UX navigation confusing', description: 'User experience navigation is not intuitive for new users', severity: 'low' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-16', module: 'mainTemplate' },
-    { id: '17', projectId: 'proj-1', title: 'Usability issue with forms', description: 'Form usability is poor, users cannot complete tasks easily', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev2', createdAt: '2024-01-17', module: 'employee' },
-    { id: '18', projectId: 'proj-1', title: 'User experience accessibility', description: 'UX lacks proper accessibility features for disabled users', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-01-18', module: 'configurations' },
 
-    // VALIDATION DEFECTS (Input, Form, Data Validation)
-    { id: '19', projectId: 'proj-1', title: 'Input validation missing', description: 'Form input validation allows invalid email addresses', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-19', module: 'employee' },
-    { id: '20', projectId: 'proj-1', title: 'Form validation error', description: 'Registration form validation accepts empty required fields', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-01-20', module: 'employee' },
-    { id: '21', projectId: 'proj-1', title: 'Data validation bypass', description: 'Input validation can be bypassed allowing malicious data', severity: 'critical' as const, status: 'REOPEN' as const, assignedTo: 'dev3', createdAt: '2024-01-21', module: 'defects' },
-    { id: '22', projectId: 'proj-1', title: 'Input field validation bug', description: 'Phone number input validation accepts invalid formats', severity: 'low' as const, status: 'FIXED' as const, assignedTo: 'dev1', createdAt: '2024-01-22', module: 'employee' },
-    { id: '23', projectId: 'proj-1', title: 'Form validation inconsistent', description: 'Validation rules inconsistent across different forms', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-01-23', module: 'configurations' },
-
-    // PERFORMANCE DEFECTS (Speed, Loading, Optimization)
-    { id: '24', projectId: 'proj-1', title: 'Slow loading performance', description: 'Page loading performance is extremely slow on mobile devices', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-01-24', module: 'project' },
-    { id: '25', projectId: 'proj-1', title: 'Performance degradation', description: 'Application performance degrades significantly after extended use', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev1', createdAt: '2024-01-25', module: 'project' },
-    { id: '26', projectId: 'proj-1', title: 'Speed optimization needed', description: 'Database query speed is unacceptably slow for large datasets', severity: 'high' as const, status: 'FIXED' as const, assignedTo: 'dev2', createdAt: '2024-01-26' },
-    { id: '27', projectId: 'proj-1', title: 'Performance memory leak', description: 'Memory usage increases over time causing performance issues', severity: 'critical' as const, status: 'REOPEN' as const, assignedTo: 'dev3', createdAt: '2024-01-27' },
-
-    // SECURITY DEFECTS (Authentication, Authorization, Permissions)
-    { id: '28', projectId: 'proj-1', title: 'Security authentication flaw', description: 'Authentication system has security vulnerability allowing bypass', severity: 'critical' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-01-28' },
-    { id: '29', projectId: 'proj-1', title: 'Permission security issue', description: 'User permission system allows unauthorized access to admin features', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-01-29' },
-    { id: '30', projectId: 'proj-1', title: 'Auth token security bug', description: 'Security tokens do not expire properly leaving system vulnerable', severity: 'high' as const, status: 'FIXED' as const, assignedTo: 'dev3', createdAt: '2024-01-30' },
-
-    // OTHER DEFECTS (Miscellaneous)
-    { id: '31', projectId: 'proj-1', title: 'Configuration file missing', description: 'Application configuration file not found in production environment', severity: 'medium' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-01-31' },
-    { id: '32', projectId: 'proj-1', title: 'Documentation outdated', description: 'Technical documentation does not match current implementation', severity: 'low' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-01' },
-    { id: '33', projectId: 'proj-1', title: 'Logging system error', description: 'Application logging system fails to write error logs properly', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev3', createdAt: '2024-02-02' },
-    { id: '34', projectId: 'proj-1', title: 'Backup process failure', description: 'Automated backup process fails silently without notification', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev1', createdAt: '2024-02-03' },
-
-    // PROJECT 2 DEFECTS - Different distribution pattern
-    { id: '35', projectId: 'proj-2', title: 'UI responsive design broken', description: 'Interface layout breaks on mobile devices', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-02-04', reopenCount: 3, module: 'mainTemplate' },
-    { id: '36', projectId: 'proj-2', title: 'Display rendering glitch', description: 'UI elements flicker during page transitions', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-05', reopenCount: 2, module: 'mainTemplate' },
-    { id: '37', projectId: 'proj-2', title: 'Interface color bug', description: 'UI color scheme changes unexpectedly', severity: 'low' as const, status: 'FIXED' as const, assignedTo: 'dev1', createdAt: '2024-02-06', reopenCount: 4, module: 'configurations' },
-    { id: '38', projectId: 'proj-2', title: 'Layout alignment issue', description: 'UI layout misaligned on different screen sizes', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-07' },
-    { id: '39', projectId: 'proj-2', title: 'Form validation error', description: 'Input validation fails for special characters', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev3', createdAt: '2024-02-08' },
-    { id: '40', projectId: 'proj-2', title: 'Input field validation', description: 'Form validation allows invalid data entry', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev1', createdAt: '2024-02-09' },
-    { id: '41', projectId: 'proj-2', title: 'Performance slow loading', description: 'Page loading speed is unacceptably slow', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-10' },
-    { id: '42', projectId: 'proj-2', title: 'Speed optimization issue', description: 'Application performance degrades over time', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-11' },
-
-    // PROJECT 3 DEFECTS - Security-heavy distribution
-    { id: '43', projectId: 'proj-3', title: 'Security authentication bypass', description: 'Auth system vulnerability allows unauthorized access', severity: 'critical' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-02-12', reopenCount: 5, module: 'employee' },
-    { id: '44', projectId: 'proj-3', title: 'Permission security flaw', description: 'User permissions can be escalated illegally', severity: 'critical' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-13', reopenCount: 2, module: 'employee' },
-    { id: '45', projectId: 'proj-3', title: 'Auth token vulnerability', description: 'Security tokens exposed in client-side code', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-14' },
-    { id: '46', projectId: 'proj-3', title: 'Security encryption weak', description: 'Data encryption algorithm is outdated and vulnerable', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-02-15' },
-    { id: '47', projectId: 'proj-3', title: 'Function logic error', description: 'Core business function returns incorrect results', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev2', createdAt: '2024-02-16' },
-    { id: '48', projectId: 'proj-3', title: 'Business logic flaw', description: 'Payment processing function has calculation errors', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-17' },
-
-    // PROJECT 4 DEFECTS - Performance-focused distribution
-    { id: '49', projectId: 'proj-4', title: 'Performance memory leak', description: 'Application memory usage grows continuously', severity: 'critical' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-02-18' },
-    { id: '50', projectId: 'proj-4', title: 'Slow database performance', description: 'Database queries take excessive time to complete', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-19' },
-    { id: '51', projectId: 'proj-4', title: 'Speed optimization needed', description: 'API response times are unacceptably slow', severity: 'high' as const, status: 'REOPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-20' },
-    { id: '52', projectId: 'proj-4', title: 'Performance bottleneck', description: 'System performance degrades under normal load', severity: 'medium' as const, status: 'FIXED' as const, assignedTo: 'dev1', createdAt: '2024-02-21' },
-    { id: '53', projectId: 'proj-4', title: 'Function timeout error', description: 'Core business function times out frequently', severity: 'medium' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-02-22' },
-    { id: '54', projectId: 'proj-4', title: 'Logic processing slow', description: 'Business logic processing is inefficient', severity: 'low' as const, status: 'OPEN' as const, assignedTo: 'dev3', createdAt: '2024-02-23' },
-
-    // PROJECT 5 DEFECTS - Usability-focused distribution
-    { id: '55', projectId: 'proj-5', title: 'User experience confusing', description: 'UX flow is not intuitive for end users', severity: 'high' as const, status: 'NEW' as const, assignedTo: 'dev1', createdAt: '2024-02-24' },
-    { id: '56', projectId: 'proj-5', title: 'Usability navigation poor', description: 'User navigation experience is frustrating', severity: 'medium' as const, status: 'OPEN' as const, assignedTo: 'dev2', createdAt: '2024-02-25' },
-    { id: '57', projectId: 'proj-5', title: 'UX accessibility missing', description: 'User experience lacks accessibility features', severity: 'high' as const, status: 'FIXED' as const, assignedTo: 'dev3', createdAt: '2024-02-26' },
-    { id: '58', projectId: 'proj-5', title: 'Usability form design', description: 'Form usability is poor, users struggle to complete', severity: 'medium' as const, status: 'REOPEN' as const, assignedTo: 'dev1', createdAt: '2024-02-27' },
-    { id: '59', projectId: 'proj-5', title: 'User experience workflow', description: 'UX workflow has too many unnecessary steps', severity: 'low' as const, status: 'NEW' as const, assignedTo: 'dev2', createdAt: '2024-02-28' },
-    { id: '60', projectId: 'proj-5', title: 'Function calculation bug', description: 'Mathematical function returns wrong calculations', severity: 'high' as const, status: 'OPEN' as const, assignedTo: 'dev3', createdAt: '2024-03-01' },
-  ];
 
   useEffect(() => {
-    // Initialize defects with mock data
-    setDefects(mockDefects);
+    // Initialize with empty defects - all data comes from API
+    setDefects([]);
 
     // Fetch projects from API
     fetchProjectsFromApi();
   }, []);
+
+  // Fetch project card colors when projects are loaded (same as Home screen)
+  useEffect(() => {
+    if (projects.length > 0) {
+      console.log('🎨 Projects loaded, fetching card colors...');
+
+      const projectIds = projects
+        .map(project => {
+          const numericId = (project as any).numericId || parseInt(project.id);
+          return isNaN(numericId) ? null : numericId;
+        })
+        .filter(id => id !== null && id > 0) as number[];
+
+      console.log('🎨 Valid project IDs for color fetching:', projectIds);
+
+      if (projectIds.length > 0) {
+        fetchProjectCardColors(projectIds);
+      } else {
+        console.warn('⚠️ No valid numeric project IDs found for color fetching');
+      }
+    }
+  }, [projects]);
 
   // Effect to fetch defect density and defect to remark ratio when selected project changes
   useEffect(() => {
@@ -865,6 +1104,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
 
       // Fetch defect to remark ratio data
       fetchDefectToRemarkFromApi(metrics.projectId);
+
+      // Fetch severity summary data
+      fetchSeveritySummaryFromApi(metrics.projectId);
+
+      // Fetch defect severity index data
+      fetchDSIFromApi(metrics.projectId);
+
+      // Fetch defect type statistics data
+      fetchDefectTypeFromApi(metrics.projectId);
+
+      // Fetch defect module statistics data
+      fetchDefectModuleFromApi(metrics.projectId);
     }
   }, [selectedProject]);
 
@@ -944,13 +1195,140 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
   };
 
   const getProjectRiskStatus = (project: Project) => {
-    const projectDefects = defects.filter(d => d.projectId === project.id);
-    const highCount = projectDefects.filter(d => d.severity === 'high' || d.severity === 'critical').length;
-    const mediumCount = projectDefects.filter(d => d.severity === 'medium').length;
-    
-    if (highCount > 0) return 'High Risk';
-    if (mediumCount > 0) return 'Medium Risk';
-    return 'Low Risk';
+    // Use the EXACT same logic as Home screen to determine project risk status
+    console.log('🎯 Getting project risk status for:', project.name);
+
+    // Get the numeric ID for API lookup (same as Home screen)
+    const numericId = (project as any).numericId || parseInt(project.id);
+    const projectColorData = projectCardColors ?
+      (projectCardColors[project.id] || projectCardColors[numericId?.toString()]) :
+      undefined;
+
+    console.log('🎯 Project color data lookup:', {
+      projectId: project.id,
+      numericId: numericId,
+      hasColorData: !!projectColorData,
+      availableRiskLevels: projectColorData?.availableRiskLevels,
+      availableKeys: projectCardColors ? Object.keys(projectCardColors) : []
+    });
+
+    if (projectColorData && projectColorData.availableRiskLevels && projectColorData.availableRiskLevels.length > 0) {
+      const riskLevels = projectColorData.availableRiskLevels;
+
+      // Use the highest risk level from API data (same logic as Home screen)
+      if (riskLevels.includes('High')) {
+        console.log('🎯 Project status: High Risk (from API)');
+        return 'High Risk';
+      } else if (riskLevels.includes('Medium')) {
+        console.log('🎯 Project status: Medium Risk (from API)');
+        return 'Medium Risk';
+      } else if (riskLevels.includes('Low')) {
+        console.log('🎯 Project status: Low Risk (from API)');
+        return 'Low Risk';
+      } else {
+        console.log('🎯 Project status: Unknown risk levels:', riskLevels);
+        return 'Low Risk'; // Default fallback
+      }
+    } else {
+      // No API data available, show loading status
+      console.log('🎯 Project status: Loading... (no API data)');
+      return 'Loading...';
+    }
+  };
+
+  // Helper function to get status badge background style based on risk level
+  // 🎨 COLOR MATCHING: Using EXACT same colors as Home screen project cards
+  // This ensures the status badge matches the project card colors perfectly
+  const getStatusBadgeStyle = (riskStatus: string, isDarkTheme: boolean, project?: Project) => {
+    // If we have project data, try to get the exact color from API (same as Home screen)
+    if (project && projectCardColors) {
+      const numericId = (project as any).numericId || parseInt(project.id);
+      const projectColorData = projectCardColors[project.id] || projectCardColors[numericId?.toString()];
+
+      if (projectColorData && projectColorData.projectCardColor) {
+        // Use the exact same color logic as Home screen project cards
+        const apiColor = projectColorData.projectCardColor;
+
+        console.log('🎨 Using API color for status badge:', {
+          projectId: project.id,
+          apiColor: apiColor,
+          riskStatus: riskStatus,
+          availableRiskLevels: projectColorData.availableRiskLevels
+        });
+
+        // Convert gradient color to solid background color for badge
+        let backgroundColor = '#F3F4F6'; // Default gray
+        let borderColor = '#6B7280'; // Default gray
+
+        if (apiColor.includes('red') || riskStatus === 'High Risk') {
+          backgroundColor = isDarkTheme ? '#2D1B1B' : '#FEF2F2';
+          borderColor = isDarkTheme ? '#EF5350' : '#EF4444';
+        } else if (apiColor.includes('yellow') || apiColor.includes('orange') || riskStatus === 'Medium Risk') {
+          backgroundColor = isDarkTheme ? '#2D2419' : '#FFFBEB';
+          borderColor = isDarkTheme ? '#FF9800' : '#F59E0B';
+        } else if (apiColor.includes('green') || riskStatus === 'Low Risk') {
+          backgroundColor = isDarkTheme ? '#1B2D1B' : '#F0FDF4';
+          borderColor = isDarkTheme ? '#66BB6A' : '#22C55E';
+        }
+
+        console.log('🎨 Final badge colors:', { backgroundColor, borderColor });
+        return { backgroundColor, borderColor, borderWidth: 1 };
+      }
+    }
+
+    // Fallback to standard colors based on risk status
+    switch (riskStatus) {
+      case 'High Risk':
+        return {
+          backgroundColor: isDarkTheme ? '#2D1B1B' : '#FEF2F2',
+          borderColor: isDarkTheme ? '#EF5350' : '#EF4444',
+          borderWidth: 1
+        };
+      case 'Medium Risk':
+        return {
+          backgroundColor: isDarkTheme ? '#2D2419' : '#FFFBEB',
+          borderColor: isDarkTheme ? '#FF9800' : '#F59E0B',
+          borderWidth: 1
+        };
+      case 'Low Risk':
+        return {
+          backgroundColor: isDarkTheme ? '#1B2D1B' : '#F0FDF4',
+          borderColor: isDarkTheme ? '#66BB6A' : '#22C55E',
+          borderWidth: 1
+        };
+      case 'Loading...':
+        return {
+          backgroundColor: isDarkTheme ? '#2D2D2D' : '#F3F4F6',
+          borderColor: '#6B7280',
+          borderWidth: 1
+        };
+      default:
+        return {
+          backgroundColor: isDarkTheme ? '#2D2D2D' : '#F3F4F6',
+          borderColor: '#6B7280',
+          borderWidth: 1
+        };
+    }
+  };
+
+  // Helper function to get status badge text style based on risk level
+  // Using the EXACT same colors as Home page project cards
+  const getStatusBadgeTextStyle = (riskStatus: string, isDarkTheme: boolean) => {
+    switch (riskStatus) {
+      case 'High Risk':
+        // Use same color as High Risk from Home page
+        return { color: isDarkTheme ? '#EF5350' : '#EF4444' };
+      case 'Medium Risk':
+        // Use same color as Medium Risk from Home page
+        return { color: isDarkTheme ? '#FF9800' : '#F59E0B' };
+      case 'Low Risk':
+        // Use same color as Low Risk from Home page
+        return { color: isDarkTheme ? '#66BB6A' : '#22C55E' };
+      case 'Loading...':
+        return { color: '#6B7280' };
+      default:
+        return { color: '#6B7280' };
+    }
   };
 
   return (
@@ -1053,8 +1431,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
             <View style={styles.projectInfo}>
               <View style={styles.projectHeader}>
                 <Text style={styles.projectName}>{selectedProject.name}</Text>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusBadgeText}>{getProjectRiskStatus(selectedProject)}</Text>
+                <View style={[styles.statusBadge, getStatusBadgeStyle(getProjectRiskStatus(selectedProject), isDark, selectedProject)]}>
+                  <Text style={[styles.statusBadgeText, getStatusBadgeTextStyle(getProjectRiskStatus(selectedProject), isDark)]}>{getProjectRiskStatus(selectedProject)}</Text>
                 </View>
               </View>
             </View>
@@ -1070,9 +1448,71 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
           <Text style={styles.sectionTitle}>Defect Severity Breakdown</Text>
 
           <View style={styles.severityPanelsContainer}>
-            {renderSeverityPanel('high', 'High Defects', '#EF4444')}
-            {renderSeverityPanel('medium', 'Medium Defects', '#F59E0B')}
-            {renderSeverityPanel('low', 'Low Defects', '#10B981')}
+            {severitySummaryData && severitySummaryData.defectSummary ? (
+              // Render panels from API data
+              severitySummaryData.defectSummary.map((severityItem) => (
+                <View key={severityItem.severity} style={[styles.severityPanel, { borderColor: getSeverityColor(severityItem.severity) }]}>
+                  {/* Panel Header */}
+                  <View style={styles.panelHeader}>
+                    <Text style={styles.panelTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {severityItem.severity} Defects
+                    </Text>
+                  </View>
+
+                  {/* Status List */}
+                  <View style={styles.statusList}>
+                    {getAvailableStatuses(severityItem.statuses).map((status) => {
+                      const statusItem = severityItem.statuses[status as keyof typeof severityItem.statuses];
+                      const count = statusItem?.count || 0;
+                      const color = statusItem?.color || getApiStatusColor(status);
+
+                      return (
+                        <View key={status} style={styles.statusItem}>
+                          <View style={[styles.statusDot, { backgroundColor: color }]} />
+                          <Text style={styles.statusText} numberOfLines={1} ellipsizeMode="tail">{status}</Text>
+                          <Text style={styles.statusCount}>{count}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  {/* Total Count */}
+                  <View style={styles.totalCountContainer}>
+                    <Text style={styles.totalCount}>Total: {severityItem.total}</Text>
+                  </View>
+                </View>
+              ))
+            ) : isLoadingSeveritySummary ? (
+              // Loading state
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={styles.loadingText}>Loading severity data...</Text>
+              </View>
+            ) : severitySummaryError ? (
+              // Error state with retry option - no fallback data
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorMessage}>⚠️ {severitySummaryError}</Text>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => {
+                    if (selectedProject) {
+                      console.log('🔄 User initiated retry for severity summary');
+                      const metrics = getProjectMetrics(selectedProject);
+                      fetchSeveritySummaryFromApi(metrics.projectId);
+                    }
+                  }}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+                <Text style={styles.loadingText}>API data required for severity summary</Text>
+              </View>
+            ) : (
+              // No data available - show message
+              <View style={styles.noDataContainer}>
+                <Text style={styles.noDataText}>No severity data available</Text>
+                <Text style={styles.noDataSubText}>Please check API connection</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -1088,6 +1528,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
                 apiData={defectDensityData}
                 isLoading={isLoadingDefectDensity}
                 error={defectDensityError}
+                isDarkTheme={isDark}
                 onRetry={() => {
                   if (selectedProject) {
                     const retryMetrics = getProjectMetrics(selectedProject);
@@ -1105,6 +1546,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
           apiData={defectToRemarkData}
           isLoading={isLoadingDefectToRemark}
           error={defectToRemarkError}
+          isDarkTheme={isDark}
           onRetry={() => {
             if (selectedProject) {
               const metrics = getProjectMetrics(selectedProject);
@@ -1117,37 +1559,97 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
 
         {/* Defect Severity Index Panel */}
         <View style={styles.severityIndexContainer}>
-          <Text style={styles.severityIndexTitle}>Defect Severity Index</Text>
+          <Text style={styles.severityIndexTitle}>
+            Defect Severity Index
+            {dsiData && (
+              <Text style={styles.apiDataIndicator}> • Live Data</Text>
+            )}
+            {!dsiData && (
+              <Text style={styles.localDataIndicator}> • Calculated</Text>
+            )}
+          </Text>
 
-          <View style={styles.severityIndexContent}>
-            {/* Severity Index Gauge */}
-            <View style={styles.severityGaugeContainer}>
-              <View style={styles.severityGauge}>
-                {/* Background Track */}
-                <View style={styles.severityGaugeTrack} />
+          {/* Loading State */}
+          {isLoadingDSI && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.loadingText}>Loading DSI data...</Text>
+            </View>
+          )}
 
-                {/* Progress Fill */}
-                <View style={[styles.severityGaugeFill, {
-                  width: '68%', // 68% represents severity index of 6.8/10
-                  backgroundColor: '#F97316', // Orange for moderate-high severity
-                }]} />
-              </View>
+          {/* Error State */}
+          {dsiError && !isLoadingDSI && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorMessage}>⚠️ {dsiError}</Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => {
+                  if (selectedProject) {
+                    const metrics = getProjectMetrics(selectedProject);
+                    fetchDSIFromApi(metrics.projectId);
+                  }
+                }}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
-              {/* Index Value Display - Outside the meter */}
-              <View style={styles.severityIndexDisplay}>
-                <Text style={styles.severityIndexValue}>6.8</Text>
-                <Text style={styles.severityIndexMax}>/ 10</Text>
-              </View>
+          {!isLoadingDSI && (
+            <View style={styles.severityIndexContent}>
+              {/* DSI Details */}
+              {dsiData && (
+                <View style={styles.dsiDetailsContainer}>
+                  <View style={styles.dsiDetailRow}>
+                    <Text style={styles.dsiDetailLabel}>Total Defects:</Text>
+                    <Text style={styles.dsiDetailValue}>{dsiData.totalDefects}</Text>
+                  </View>
+                  <View style={styles.dsiDetailRow}>
+                    <Text style={styles.dsiDetailLabel}>Actual Score:</Text>
+                    <Text style={styles.dsiDetailValue}>{dsiData.actualSeverityScore}</Text>
+                  </View>
+                  <View style={styles.dsiDetailRow}>
+                    <Text style={styles.dsiDetailLabel}>Maximum Score:</Text>
+                    <Text style={styles.dsiDetailValue}>{dsiData.maximumSeverityScore}</Text>
+                  </View>
+                </View>
+              )}
 
-              {/* Severity Level Indicator */}
-              <View style={styles.severityLevelContainer}>
-                <Text style={styles.severityLevelLabel}>Severity Level</Text>
-                <View style={[styles.severityLevelBadge, { backgroundColor: '#F97316' }]}>
-                  <Text style={styles.severityLevelText}>Moderate-High</Text>
+              {/* Severity Index Gauge */}
+              <View style={styles.severityGaugeContainer}>
+                <View style={styles.severityGauge}>
+                  {/* Background Track */}
+                  <View style={styles.severityGaugeTrack} />
+
+                  {/* Progress Fill */}
+                  <View style={[styles.severityGaugeFill, {
+                    width: `${dsiData ? Math.min(dsiData.dsiPercentage, 100) : 68}%`,
+                    backgroundColor: dsiData ? getDSIInterpretationColor(dsiData.dsiPercentage) : '#F97316',
+                  }]} />
+                </View>
+
+                {/* Index Value Display - Outside the meter */}
+                <View style={styles.severityIndexDisplay}>
+                  <Text style={styles.severityIndexValue}>
+                    {dsiData ? dsiData.dsiPercentage.toFixed(1) : '6.8'}
+                  </Text>
+                  <Text style={styles.severityIndexMax}>%</Text>
+                </View>
+
+                {/* Severity Level Indicator */}
+                <View style={styles.severityLevelContainer}>
+                  <Text style={styles.severityLevelLabel}>Risk Level</Text>
+                  <View style={[styles.severityLevelBadge, {
+                    backgroundColor: dsiData ? getDSIInterpretationColor(dsiData.dsiPercentage) : '#F97316'
+                  }]}>
+                    <Text style={styles.severityLevelText}>
+                      {dsiData ? dsiData.interpretation : 'Moderate-High'}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </View>
-          </View>
+          )}
         </View>
 
         {/* Defect Type Distribution Pie Chart */}
@@ -1155,13 +1657,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
           selectedProjectId={selectedProject?.id}
           defects={defects}
           projects={projects}
-        />
-
-        {/* Defects Reopened Multiple Times Pie Chart */}
-        <DefectsReopenedChart
-          selectedProjectId={selectedProject?.id}
-          defects={defects}
-          projects={projects}
+          apiData={defectTypeData}
+          isLoading={isLoadingDefectType}
+          error={defectTypeError}
+          onRetry={() => {
+            if (selectedProject) {
+              const metrics = getProjectMetrics(selectedProject);
+              fetchDefectTypeFromApi(metrics.projectId);
+            }
+          }}
         />
 
         {/* Defects by Module Pie Chart */}
@@ -1169,6 +1673,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ route, navigation, 
           selectedProjectId={selectedProject?.id}
           defects={defects}
           projects={projects}
+          apiData={defectModuleData}
+          isLoading={isLoadingDefectModule}
+          error={defectModuleError}
+          onRetry={() => {
+            if (selectedProject) {
+              const metrics = getProjectMetrics(selectedProject);
+              fetchDefectModuleFromApi(metrics.projectId);
+            }
+          }}
         />
 
           </ScrollView>
@@ -1406,15 +1919,15 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.text.primary,
   },
   statusBadge: {
-    backgroundColor: '#FEE2E2',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    // Background color and border will be set dynamically
   },
   statusBadgeText: {
     fontSize: 12,
-    color: colors.system.red,
     fontWeight: '600',
+    // Color will be set dynamically based on risk level
   },
   breakdownContainer: {
     marginBottom: 24,
@@ -1726,7 +2239,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.text.secondary,
   },
   ratioSummary: {
-    backgroundColor: colors.background.secondary,
+    backgroundColor: colors.background.secondary, // Default background, will be overridden by dynamic color
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
@@ -1734,11 +2247,11 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   ratioSummaryLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.text.secondary,
+    color: '#FFFFFF', // White text for better contrast on colored background
     marginBottom: 4,
   },
   ratioValueContainer: {
-    backgroundColor: '#FFFF00', // Default yellow, will be overridden by dynamic color
+    backgroundColor: 'rgba(255, 255, 255, 0.2)', // Semi-transparent white background
     borderRadius: 12, // Curved rectangle
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -1750,11 +2263,11 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   ratioSummaryValue: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF', // White text for better contrast on colored background
+    color: '#FFFFFF', // White text for better contrast
   },
   ratioSummaryDescription: {
     fontSize: 12,
-    color: colors.text.secondary,
+    color: '#FFFFFF', // White text for better contrast on colored background
     textAlign: 'center',
     lineHeight: 16,
   },
@@ -1922,6 +2435,50 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.text.tertiary,
     fontWeight: '400',
     fontStyle: 'italic',
+  },
+
+  // DSI Details Styles
+  dsiDetailsContainer: {
+    marginBottom: 20,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+  },
+  dsiDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  dsiDetailLabel: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    fontWeight: '500',
+  },
+  dsiDetailValue: {
+    fontSize: 14,
+    color: colors.text.primary,
+    fontWeight: '600',
+  },
+
+  // No Data Styles
+  noDataContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  noDataText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: colors.text.secondary,
+    marginBottom: 8,
+  },
+  noDataSubText: {
+    fontSize: 14,
+    color: colors.text.tertiary,
+    textAlign: 'center',
   },
 
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,15 @@ import {
   TouchableOpacity,
   Image,
   Dimensions,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 
 const { height } = Dimensions.get('window');
 import { useThemedStyles, useTheme } from '../theme/ThemeContext';
 import { ThemeColors } from '../theme/colors';
+import { getProjects, transformProjectsForApp, ProjectData, ProjectApiError } from '../api/GetProject';
+import { getProjectCardColor, ProjectCardColorData, ProjectCardColorApiError, convertGradientToRNStyle } from '../api/GetProjectCardColor';
 
 interface User {
   id: string;
@@ -36,70 +40,175 @@ const Home: React.FC<HomeProps> = ({ user, onNavigateToProfile, onNavigateToProj
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [riskFilter, setRiskFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
 
-  // Mock projects data
-  const projects = [
-    {
-      id: 'proj-1',
-      name: 'E-Commerce Platform',
-      description: 'Main shopping platform',
-    },
-    {
-      id: 'proj-2',
-      name: 'Mobile Banking App',
-      description: 'iOS and Android banking application',
-    },
-    {
-      id: 'proj-3',
-      name: 'Customer Portal',
-      description: 'Self-service customer portal',
-    },
-    {
-      id: 'proj-4',
-      name: 'Analytics Dashboard',
-      description: 'Business intelligence dashboard',
-    },
-    {
-      id: 'proj-5',
-      name: 'Payment Gateway',
-      description: 'Secure payment processing system',
-    },
-    {
-      id: 'proj-6',
-      name: 'Inventory Management',
-      description: 'Stock and inventory tracking',
-    },
-  ];
+  // API state management
+  const [projects, setProjects] = useState<any[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
-  // Mock defects data with project associations
-  const defects = [
-    { id: 'DEF-001', projectId: 'proj-1', severity: 'high', title: 'Login page not responsive' },
-    { id: 'DEF-002', projectId: 'proj-1', severity: 'critical', title: 'Database connection timeout' },
-    { id: 'DEF-003', projectId: 'proj-1', severity: 'medium', title: 'UI alignment issues' },
-    { id: 'DEF-004', projectId: 'proj-2', severity: 'high', title: 'App crashes on startup' },
-    { id: 'DEF-005', projectId: 'proj-2', severity: 'low', title: 'Minor text alignment' },
-    { id: 'DEF-006', projectId: 'proj-3', severity: 'medium', title: 'Slow loading times' },
-    { id: 'DEF-007', projectId: 'proj-4', severity: 'low', title: 'Chart rendering issue' },
-    { id: 'DEF-008', projectId: 'proj-5', severity: 'critical', title: 'Payment processing error' },
-    { id: 'DEF-009', projectId: 'proj-5', severity: 'high', title: 'Security vulnerability' },
-    { id: 'DEF-010', projectId: 'proj-6', severity: 'low', title: 'Export functionality' },
-  ];
+  // Project Card Color API state
+  const [projectCardColors, setProjectCardColors] = useState<{ [key: string]: ProjectCardColorData }>({});
+  const [isLoadingCardColors, setIsLoadingCardColors] = useState<boolean>(false);
+  const [cardColorsError, setCardColorsError] = useState<string | null>(null);
+  const [colorUpdateTrigger, setColorUpdateTrigger] = useState<number>(0); // Force re-render when colors update
 
-  // Calculate risk counts
-  const riskCounts = {
-    high: projects.filter(project => {
-      const projectDefects = defects.filter(d => d.projectId === project.id);
-      return projectDefects.some(d => d.severity === 'high' || d.severity === 'critical');
-    }).length,
-    medium: projects.filter(project => {
-      const projectDefects = defects.filter(d => d.projectId === project.id);
-      return projectDefects.some(d => d.severity === 'medium') &&
-             !projectDefects.some(d => d.severity === 'high' || d.severity === 'critical');
-    }).length,
-    low: projects.filter(project => {
-      const projectDefects = defects.filter(d => d.projectId === project.id);
-      return !projectDefects.some(d => d.severity === 'high' || d.severity === 'critical' || d.severity === 'medium');
-    }).length,
+  // Fetch projects from API
+  const fetchProjects = async () => {
+    try {
+      setIsLoadingProjects(true);
+      setProjectsError(null);
+      console.log('🏠 Fetching projects for Home page...');
+
+      const apiProjects = await getProjects();
+      const transformedProjects = transformProjectsForApp(apiProjects);
+
+      console.log('✅ Projects loaded successfully:', transformedProjects.length);
+      setProjects(transformedProjects);
+    } catch (error) {
+      console.error('❌ Failed to fetch projects:', error);
+
+      if (error instanceof ProjectApiError) {
+        setProjectsError(`API Error: ${error.message}`);
+      } else {
+        setProjectsError('Failed to load projects. Please check your connection.');
+      }
+
+      // No fallback - show error state instead
+      setProjects([]);
+    } finally {
+      setIsLoadingProjects(false);
+    }
   };
+
+  // Fetch project card colors from API
+  const fetchProjectCardColors = async (projectIds: number[]) => {
+    if (projectIds.length === 0) return;
+
+    try {
+      setIsLoadingCardColors(true);
+      setCardColorsError(null);
+      console.log('🎨 Fetching project card colors for projects:', projectIds);
+
+      const colorPromises = projectIds.map(async (projectId) => {
+        try {
+          const colorData = await getProjectCardColor(projectId);
+          return { projectId: projectId.toString(), colorData };
+        } catch (error) {
+          console.warn(`⚠️ Failed to fetch color for project ${projectId}:`, error);
+          return null;
+        }
+      });
+
+      const colorResults = await Promise.allSettled(colorPromises);
+      const newCardColors: { [key: string]: ProjectCardColorData } = {};
+
+      colorResults.forEach((result) => {
+        if (result.status === 'fulfilled' && result.value) {
+          const { projectId, colorData } = result.value;
+          newCardColors[projectId] = colorData;
+        }
+      });
+
+      console.log('✅ Project card colors loaded:', Object.keys(newCardColors).length);
+      console.log('🎨 Card colors data:', JSON.stringify(newCardColors, null, 2));
+      setProjectCardColors(newCardColors);
+
+      // Test color conversion for debugging
+      Object.entries(newCardColors).forEach(([projectId, colorData]) => {
+        const convertedColor = convertGradientToRNStyle(colorData.projectCardColor);
+        console.log(`🎨 Color conversion test - Project ${projectId}: ${colorData.projectCardColor} -> ${convertedColor}`);
+      });
+
+      // Force re-render of project cards
+      setColorUpdateTrigger(prev => prev + 1);
+
+    } catch (error) {
+      console.error('❌ Error fetching project card colors:', error);
+      if (error instanceof ProjectCardColorApiError) {
+        setCardColorsError(`${error.apiStatus}: ${error.message}`);
+      } else {
+        setCardColorsError('Failed to load project card colors');
+      }
+    } finally {
+      setIsLoadingCardColors(false);
+    }
+  };
+
+  // Load projects on component mount
+  useEffect(() => {
+    console.log('🏠 Home component mounted, fetching projects...');
+    fetchProjects();
+  }, []);
+
+  // Fetch card colors when projects are loaded
+  useEffect(() => {
+    if (projects.length > 0) {
+      console.log('🎨 Projects loaded, preparing to fetch card colors:', projects.map(p => ({ id: p.id, name: p.name, numericId: (p as any).numericId })));
+
+      const projectIds = projects
+        .map(project => {
+          // Use numericId if available, otherwise try to parse the id
+          const numericId = (project as any).numericId || parseInt(project.id);
+          console.log(`🎨 Project ${project.name}: id=${project.id}, numericId=${(project as any).numericId}, parsed=${numericId}`);
+          return numericId;
+        })
+        .filter(id => !isNaN(id) && id > 0);
+
+      console.log('🎨 Valid project IDs for color fetching:', projectIds);
+
+      if (projectIds.length > 0) {
+        fetchProjectCardColors(projectIds);
+      } else {
+        console.warn('⚠️ No valid numeric project IDs found for color fetching');
+      }
+    }
+  }, [projects]);
+
+  // Calculate risk counts based on API data from projectCardColors
+  const riskCounts = useMemo(() => {
+    if (projects.length === 0) {
+      return { high: 0, medium: 0, low: 0 };
+    }
+
+    // If no project card colors data, show all projects as low risk
+    if (!projectCardColors) {
+      console.log('⚠️ No project card colors data available, showing all projects as low risk');
+      return { high: 0, medium: 0, low: projects.length };
+    }
+
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+
+    projects.forEach(project => {
+      // Get the numeric ID for API lookup
+      const numericId = (project as any).numericId || parseInt(project.id);
+      const projectColorData = projectCardColors[project.id] || projectCardColors[numericId?.toString()];
+
+      if (projectColorData && projectColorData.availableRiskLevels) {
+        const riskLevels = projectColorData.availableRiskLevels;
+
+        // Determine the highest risk level for this project
+        if (riskLevels.includes('High')) {
+          high++;
+        } else if (riskLevels.includes('Medium')) {
+          medium++;
+        } else if (riskLevels.includes('Low')) {
+          low++;
+        } else {
+          // If no specific risk level, default to low
+          low++;
+        }
+      } else {
+        // If no API data available, default to low risk
+        console.log(`   Project ${project.id} (${project.projectName}): No API data, defaulting to LOW risk`);
+        low++;
+      }
+    });
+
+    console.log('📊 Risk calculation results:', { high, medium, low, totalProjects: projects.length });
+    console.log('📊 Project card colors available:', projectCardColors ? Object.keys(projectCardColors).length : 0, 'projects');
+    return { high, medium, low };
+  }, [projects, projectCardColors]);
 
   const StatCard = ({ title, value, color }: { title: string; value: number; color: string }) => (
     <View style={[styles.statCard, { borderLeftColor: color }]}>
@@ -108,33 +217,87 @@ const Home: React.FC<HomeProps> = ({ user, onNavigateToProfile, onNavigateToProj
     </View>
   );
 
+  // Helper function to adjust color brightness
+  const adjustColorBrightness = (hexColor: string, percent: number): string => {
+    // Remove # if present
+    const hex = hexColor.replace('#', '');
+
+    // Parse RGB values
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    // Adjust brightness
+    const adjustedR = Math.max(0, Math.min(255, r + (r * percent / 100)));
+    const adjustedG = Math.max(0, Math.min(255, g + (g * percent / 100)));
+    const adjustedB = Math.max(0, Math.min(255, b + (b * percent / 100)));
+
+    // Convert back to hex
+    const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0');
+    return `#${toHex(adjustedR)}${toHex(adjustedG)}${toHex(adjustedB)}`;
+  };
+
   const ProjectCard = ({
     project,
-    risk
+    risk,
+    projectCardColors
   }: {
     project: any;
     risk: 'high' | 'medium' | 'low';
+    projectCardColors?: { [key: string]: ProjectCardColorData };
   }) => {
     const getGradientColors = () => {
-      switch (risk) {
-        case 'high':
-          return ['#DC2626', '#B91C1C']; // from-red-600 to-red-700 (more vibrant red)
-        case 'medium':
-          return ['#FBBF24', '#F59E0B']; // from-yellow-400 to-yellow-500 (proper yellow gradient)
-        case 'low':
-          return ['#22C55E', '#16A34A']; // from-green-500 to-green-600 (brighter green)
-        default:
-          return ['#6B7280', '#4B5563'];
+      // Check if we have API color data for this project
+      // Try both string ID and numeric ID as keys
+      const numericId = (project as any).numericId || parseInt(project.id);
+      const projectColorData = projectCardColors ?
+        (projectCardColors[project.id] || projectCardColors[numericId?.toString()]) :
+        undefined;
+
+      console.log(`🎨 Project ${project.id} (${project.name}):`, {
+        stringId: project.id,
+        numericId: numericId,
+        hasApiData: !!projectColorData,
+        apiColor: projectColorData?.projectCardColor,
+        riskLevel: risk,
+        availableRiskLevels: projectColorData?.availableRiskLevels,
+        availableKeys: projectCardColors ? Object.keys(projectCardColors) : []
+      });
+
+      if (projectColorData && projectColorData.projectCardColor) {
+        // Use API color data
+        const apiColor = convertGradientToRNStyle(projectColorData.projectCardColor);
+        // Create a gradient effect by using slightly different shades
+        const baseColor = apiColor;
+        const darkerColor = adjustColorBrightness(apiColor, -20); // Darker shade
+
+        console.log(`🎨 Using API colors for ${project.name}:`, [baseColor, darkerColor]);
+        return [baseColor, darkerColor];
       }
+
+      // Use default neutral colors if no API data
+      const defaultColors = ['#6B7280', '#4B5563']; // Gray gradient
+      console.log(`🎨 Using default colors for ${project.name} (no API data):`, defaultColors);
+      return defaultColors;
     };
 
     const getRiskLabel = () => {
-      switch (risk) {
-        case 'high': return 'High Risk';
-        case 'medium': return 'Medium Risk';
-        case 'low': return 'Low Risk';
-        default: return 'Unknown';
+      // Check if we have API color data for this project
+      const numericId = (project as any).numericId || parseInt(project.id);
+      const projectColorData = projectCardColors ?
+        (projectCardColors[project.id] || projectCardColors[numericId?.toString()]) :
+        undefined;
+
+      if (projectColorData && projectColorData.availableRiskLevels) {
+        // Use the highest risk level from API data
+        const riskLevels = projectColorData.availableRiskLevels;
+        if (riskLevels.includes('High')) return 'High Risk';
+        if (riskLevels.includes('Medium')) return 'Medium Risk';
+        if (riskLevels.includes('Low')) return 'Low Risk';
       }
+
+      // No fallback - show unknown if no API data
+      return 'Risk Level Unknown';
     };
 
     const [startColor, endColor] = getGradientColors();
@@ -208,7 +371,7 @@ const Home: React.FC<HomeProps> = ({ user, onNavigateToProfile, onNavigateToProj
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.appTitleSection}>
-            <View style={styles.glassBackground}>
+            <View style={styles.titleContainer}>
               <Text style={styles.appTitle}>ZEROBUG</Text>
             </View>
           </View>
@@ -223,7 +386,18 @@ const Home: React.FC<HomeProps> = ({ user, onNavigateToProfile, onNavigateToProj
           </View>
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoadingProjects}
+              onRefresh={fetchProjects}
+              colors={['#007AFF']}
+              tintColor="#007AFF"
+            />
+          }
+        >
           {!selectedProjectId ? (
             <>
               {/* Project Status Insights */}
@@ -290,28 +464,67 @@ const Home: React.FC<HomeProps> = ({ user, onNavigateToProfile, onNavigateToProj
                     </TouchableOpacity>
                   </View>
                 </View>
-                <View style={styles.projectsGrid}>
-                  {projects.map((project) => {
-                    const projectDefects = defects.filter(d => d.projectId === project.id);
-                    const highCount = projectDefects.filter(d => d.severity === 'high' || d.severity === 'critical').length;
-                    const mediumCount = projectDefects.filter(d => d.severity === 'medium').length;
-                    const lowCount = projectDefects.filter(d => d.severity === 'low').length;
+                {isLoadingProjects ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#007AFF" />
+                    <Text style={styles.loadingText}>Loading projects...</Text>
+                  </View>
+                ) : isLoadingCardColors ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#007AFF" />
+                    <Text style={styles.loadingText}>Loading project colors...</Text>
+                  </View>
+                ) : projectsError ? (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{projectsError}</Text>
+                    <TouchableOpacity style={styles.retryButton} onPress={fetchProjects}>
+                      <Text style={styles.retryButtonText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : projects.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No projects found</Text>
+                  </View>
+                ) : (
+                  <View style={styles.projectsGrid}>
+                    {projects.map((project) => {
+                      // Get risk level from API data
+                      const numericId = (project as any).numericId || parseInt(project.id);
+                      const projectColorData = projectCardColors ?
+                        (projectCardColors[project.id] || projectCardColors[numericId?.toString()]) :
+                        undefined;
 
-                    let risk: 'high' | 'medium' | 'low' = 'low';
-                    if (highCount > 0) risk = 'high';
-                    else if (mediumCount > 0) risk = 'medium';
+                      let risk: 'high' | 'medium' | 'low' = 'low';
 
-                    if (riskFilter !== 'all' && risk !== riskFilter) return null;
+                      if (projectColorData && projectColorData.availableRiskLevels && projectColorData.availableRiskLevels.length > 0) {
+                        const riskLevels = projectColorData.availableRiskLevels;
 
-                    return (
-                      <ProjectCard
-                        key={project.id}
-                        project={project}
-                        risk={risk}
-                      />
-                    );
-                  })}
-                </View>
+                        // Determine the highest risk level for this project
+                        if (riskLevels.includes('High')) {
+                          risk = 'high';
+                        } else if (riskLevels.includes('Medium')) {
+                          risk = 'medium';
+                        } else if (riskLevels.includes('Low')) {
+                          risk = 'low';
+                        }
+                      } else {
+                        // If no API data or empty risk levels, default to low risk
+                        risk = 'low';
+                      }
+
+                      if (riskFilter !== 'all' && risk !== riskFilter) return null;
+
+                      return (
+                        <ProjectCard
+                          key={`${project.id}-${colorUpdateTrigger}`}
+                          project={project}
+                          risk={risk}
+                          projectCardColors={projectCardColors}
+                        />
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             </>
           ) : (
@@ -430,30 +643,18 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   appTitleSection: {
     flex: 1,
   },
-  glassBackground: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-    overflow: 'hidden',
+  titleContainer: {
     alignSelf: 'flex-start',
     maxWidth: 180,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
 
+
   appTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: colors.text.primary,
+    color: '#FFFFFF',
     letterSpacing: 1.5,
     fontFamily: 'System',
     textTransform: 'uppercase',
@@ -931,6 +1132,49 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderRadius: 50,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     opacity: 0.5,
+  },
+  // Loading, Error, and Empty States
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    marginTop: 12,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  errorText: {
+    fontSize: 16,
+    color: colors.system.red,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: colors.system.blue,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    textAlign: 'center',
   },
 });
 

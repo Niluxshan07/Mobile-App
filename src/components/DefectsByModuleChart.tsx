@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
 import PieChart from 'react-native-pie-chart';
 import { useThemedStyles, useTheme } from '../theme/ThemeContext';
 import { ThemeColors } from '../theme/colors';
+import { DefectModuleItem, formatDefectModuleForPieChart, getDefectModuleSummary } from '../api/GetDefectModulePieChart';
 
 interface Defect {
   id: string;
@@ -22,10 +23,22 @@ interface Project {
   description: string;
 }
 
+interface ModuleDataItem {
+  value: number;
+  color: string;
+  label: string;
+  percentage?: number;
+  moduleId?: number;
+}
+
 interface DefectsByModuleChartProps {
   selectedProjectId?: string;
   defects: Defect[];
   projects: Project[];
+  apiData?: DefectModuleItem[] | null;
+  isLoading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 /**
@@ -48,109 +61,82 @@ interface DefectsByModuleChartProps {
  * - Main Template: template, layout, design
  * - Dashboard: dashboard, reporting, analytics
  */
-const DefectsByModuleChart: React.FC<DefectsByModuleChartProps> = ({ 
-  selectedProjectId, 
-  defects, 
-  projects 
+const DefectsByModuleChart: React.FC<DefectsByModuleChartProps> = ({
+  selectedProjectId,
+  defects,
+  projects,
+  apiData,
+  isLoading = false,
+  error,
+  onRetry
 }) => {
   const { isDark } = useTheme();
   const styles = useThemedStyles(createStyles);
   const widthAndHeight = 200;
 
-  // Get defects for the selected project or all defects if no project selected
-  const projectDefects = useMemo(() => {
-    return selectedProjectId 
-      ? defects.filter(defect => defect.projectId === selectedProjectId)
-      : defects;
-  }, [defects, selectedProjectId]);
-
-  // Calculate dynamic module counts (memoized for performance)
-  const moduleCounts = useMemo(() => {
-    const counts = {
-      configurations: 0,
-      projectManagement: 0,
-      bench: 0,
-      defects: 0,
-      testCases: 0,
-      employee: 0,
-      releases: 0,
-      project: 0,
-      mainTemplate: 0,
-      dashboard: 0
-    };
-
-    projectDefects.forEach(defect => {
-      // Use actual module if available, otherwise categorize by keywords
-      let module = defect.module;
-      
-      if (!module) {
-        // Categorize based on title and description keywords
-        const title = defect.title.toLowerCase();
-        const description = defect.description?.toLowerCase() || '';
-        const content = `${title} ${description}`;
-        
-        if (content.includes('config') || content.includes('setting') || content.includes('configuration')) {
-          module = 'configurations';
-        } else if (content.includes('project management') || content.includes('planning') || content.includes('workflow')) {
-          module = 'projectManagement';
-        } else if (content.includes('bench') || content.includes('test environment') || content.includes('testing environment')) {
-          module = 'bench';
-        } else if (content.includes('defect') || content.includes('bug') || content.includes('issue tracking')) {
-          module = 'defects';
-        } else if (content.includes('test case') || content.includes('testing') || content.includes('qa') || content.includes('quality')) {
-          module = 'testCases';
-        } else if (content.includes('employee') || content.includes('user') || content.includes('staff') || content.includes('hr')) {
-          module = 'employee';
-        } else if (content.includes('release') || content.includes('deployment') || content.includes('version')) {
-          module = 'releases';
-        } else if (content.includes('template') || content.includes('layout') || content.includes('design')) {
-          module = 'mainTemplate';
-        } else if (content.includes('dashboard') || content.includes('reporting') || content.includes('analytics')) {
-          module = 'dashboard';
-        } else {
-          module = 'project'; // Default to main project module
-        }
-      }
-      
-      // Increment the appropriate counter
-      if (counts.hasOwnProperty(module)) {
-        counts[module as keyof typeof counts]++;
-      } else {
-        counts.project++; // Default fallback
-      }
-    });
-
-    return counts;
-  }, [projectDefects]);
-
-  // Create dynamic module data based on actual counts (memoized)
-  const moduleData = useMemo(() => {
-    return [
-      { value: moduleCounts.configurations, color: '#4285F4', label: 'Configurations' },
-      { value: moduleCounts.projectManagement, color: '#ea4335', label: 'Project Management' },
-      { value: moduleCounts.bench, color: '#fbbc05', label: 'Bench' },
-      { value: moduleCounts.defects, color: '#ea4335', label: 'Defects' },
-      { value: moduleCounts.testCases, color: '#9c27b0', label: 'Test Cases' },
-      { value: moduleCounts.employee, color: '#00bcd4', label: 'Employee' },
-      { value: moduleCounts.releases, color: '#ff5722', label: 'Releases' },
-      { value: moduleCounts.project, color: '#4caf50', label: 'Project' },
-      { value: moduleCounts.mainTemplate, color: '#00bfae', label: 'Main Template' },
-      { value: moduleCounts.dashboard, color: '#ff9800', label: 'Dashboard' },
-    ].filter(item => item.value > 0); // Only show modules with defects
-  }, [moduleCounts]);
+  // Create dynamic module data based on API data only (memoized)
+  const moduleData: ModuleDataItem[] = useMemo(() => {
+    if (apiData && apiData.length > 0) {
+      // Use API data
+      return formatDefectModuleForPieChart(apiData).map(item => ({
+        value: item.population,
+        color: item.color,
+        label: item.name,
+        percentage: item.percentage,
+        moduleId: item.moduleId
+      }));
+    } else {
+      // No fallback data - return empty array
+      return [];
+    }
+  }, [apiData]);
 
   // Prepare data for PieChart component
   const series = moduleData.map(item => item.value);
   const sliceColor = moduleData.map(item => item.color);
 
-  const totalDefects = moduleData.reduce((sum, item) => sum + item.value, 0);
-  const mostCommonModule = moduleData.length > 0 ? moduleData.reduce((prev, current) => 
-    prev.value > current.value ? prev : current
-  ) : null;
+  const totalDefects = apiData
+    ? apiData.reduce((sum, item) => sum + item.value, 0)
+    : moduleData.reduce((sum, item) => sum + item.value, 0);
+  const mostCommonModule = apiData && apiData.length > 0
+    ? apiData.reduce((prev, current) => prev.value > current.value ? prev : current)
+    : moduleData.length > 0 ? moduleData.reduce((prev, current) =>
+        prev.value > current.value ? prev : current
+      ) : null;
 
   const calculatePercentage = (value: number) => {
     return totalDefects > 0 ? ((value / totalDefects) * 100).toFixed(1) : '0.0';
   };
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Defects by Module</Text>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading module data...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Show error state
+  if (error && !apiData) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Defects by Module</Text>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>⚠️ {error}</Text>
+          {onRetry && (
+            <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   // Show message if no defects
   if (totalDefects === 0) {
@@ -171,6 +157,12 @@ const DefectsByModuleChart: React.FC<DefectsByModuleChartProps> = ({
     <View style={styles.container}>
       <Text style={styles.title}>
         Defects by Module
+        {apiData && (
+          <Text style={styles.apiDataIndicator}> • Live Data</Text>
+        )}
+        {!apiData && (
+          <Text style={styles.localDataIndicator}> • Calculated</Text>
+        )}
         {selectedProjectId && (
           <Text style={styles.projectInfo}>
             {'\n'}({projects.find(p => p.id === selectedProjectId)?.name || 'Selected Project'})
@@ -191,7 +183,7 @@ const DefectsByModuleChart: React.FC<DefectsByModuleChartProps> = ({
           <View key={index} style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: item.color }]} />
             <Text style={styles.legendText}>
-              {item.label}: {item.value} ({calculatePercentage(item.value)}%)
+              {item.label}: {item.value} ({item.percentage ? item.percentage.toFixed(1) : calculatePercentage(item.value)}%)
             </Text>
           </View>
         ))}
@@ -206,7 +198,9 @@ const DefectsByModuleChart: React.FC<DefectsByModuleChartProps> = ({
           <View style={styles.summaryItem}>
             <Text style={styles.summaryNumber}>{mostCommonModule.value}</Text>
             <Text style={styles.summaryLabel}>Most Common</Text>
-            <Text style={styles.summarySubLabel}>{mostCommonModule.label}</Text>
+            <Text style={styles.summarySubLabel}>
+              {'name' in mostCommonModule ? mostCommonModule.name : mostCommonModule.label}
+            </Text>
           </View>
         )}
       </View>
@@ -309,6 +303,54 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.text.secondary,
     fontStyle: 'italic',
     marginTop: 2,
+  },
+
+  // Loading and Error States
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    marginLeft: 12,
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.system.red,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  retryButton: {
+    backgroundColor: colors.system.blue,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+
+  // API Data Indicators
+  apiDataIndicator: {
+    fontSize: 12,
+    color: colors.system.green,
+    fontWeight: '500',
+    fontStyle: 'italic',
+  },
+  localDataIndicator: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+    fontWeight: '400',
+    fontStyle: 'italic',
   },
 });
 

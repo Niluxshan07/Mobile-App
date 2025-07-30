@@ -180,7 +180,9 @@ export const getProjects = async (): Promise<ProjectData[]> => {
  */
 export const transformProjectsForApp = (apiProjects: ProjectData[]) => {
   return apiProjects.map(project => ({
-    id: project.projectId, // Use projectId as the main ID for the app
+    id: project.id.toString(), // Use numeric id converted to string for consistency
+    numericId: project.id, // Keep numeric ID for API calls that need it
+    projectId: project.projectId, // Keep original projectId as well
     name: project.projectName,
     description: project.description,
     // Additional fields that might be useful

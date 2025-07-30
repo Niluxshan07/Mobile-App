@@ -54,59 +54,83 @@ export interface DefectDensityUIMapping {
 }
 
 /**
+ * Gets theme-aware color for defect density (same as Home screen project cards)
+ *
+ * @param defectDensity - The defect density value
+ * @param isDarkTheme - Whether dark theme is active
+ * @returns string - The appropriate color for the theme
+ */
+export const getDefectDensityColor = (defectDensity: number, isDarkTheme: boolean = false): string => {
+  if (defectDensity >= 0 && defectDensity < 7) {
+    // Green range (0-7) - same as Low Risk from Home screen
+    return isDarkTheme ? '#66BB6A' : '#22C55E';
+  } else if (defectDensity >= 7 && defectDensity < 10) {
+    // Orange range (7-10) - same as Medium Risk from Home screen
+    return isDarkTheme ? '#FF9800' : '#F59E0B';
+  } else {
+    // Red range (10-20+) - same as High Risk from Home screen
+    return isDarkTheme ? '#EF5350' : '#EF4444';
+  }
+};
+
+/**
  * Maps defect density value to UI colors and meanings
- * 
+ *
  * @param defectDensity - The calculated defect density value
  * @returns DefectDensityUIMapping - UI mapping object
  */
 export const mapDefectDensityToUI = (defectDensity: number): DefectDensityUIMapping => {
-  if (defectDensity >= 0 && defectDensity < 3.5) {
+  // 🎨 COLOR MATCHING: Using EXACT same colors and ranges as Home screen project cards
+  // 0-7 Green, 7-10 Orange, 10-20 Red (same as Home screen project status)
+
+  if (defectDensity >= 0 && defectDensity < 7) {
+    // GREEN RANGE (0-7) - Same as Low Risk from Home screen
+    let meaning = '';
+    if (defectDensity < 2) {
+      meaning = 'Excellent Quality';
+    } else if (defectDensity < 4) {
+      meaning = 'Very Good Quality';
+    } else if (defectDensity < 6) {
+      meaning = 'Good Quality';
+    } else {
+      meaning = 'Acceptable Quality';
+    }
+
     return {
       value: defectDensity,
       color: 'Green',
-      meaning: 'Good',
-      range: '0 to 3.5',
-      uiColor: '#00ff6b' // Old Light Green
+      meaning: meaning,
+      range: '0 to 7',
+      uiColor: '#22C55E' // Same as Low Risk from Home screen (light theme)
     };
-  } else if (defectDensity >= 3.5 && defectDensity < 7) {
-    return {
-      value: defectDensity,
-      color: 'Green',
-      meaning: 'Good',
-      range: '3.5 to 7',
-      uiColor: '#14eb6e' // Old Dark Green
-    };
-  } else if (defectDensity >= 7 && defectDensity < 8.5) {
-    return {
-      value: defectDensity,
-      color: 'Yellow',
-      meaning: 'Moderate Quality',
-      range: '7 to 8.5',
-      uiColor: '#FFFF00' // Yellow
-    };
-  } else if (defectDensity >= 8.5 && defectDensity < 10) {
+  } else if (defectDensity >= 7 && defectDensity < 10) {
+    // ORANGE RANGE (7-10) - Same as Medium Risk from Home screen
     return {
       value: defectDensity,
       color: 'Orange',
-      meaning: 'Moderate Quality',
-      range: '8.5 to 10',
-      uiColor: '#FFA500' // Orange
+      meaning: 'Caution Required',
+      range: '7 to 10',
+      uiColor: '#F59E0B' // Same as Medium Risk from Home screen (light theme)
     };
-  } else if (defectDensity >= 10 && defectDensity < 15) {
+  } else {
+    // RED RANGE (10-20+) - Same as High Risk from Home screen
+    let meaning = '';
+    if (defectDensity < 15) {
+      meaning = 'High Risk';
+    } else if (defectDensity < 18) {
+      meaning = 'Critical Risk';
+    } else if (defectDensity <= 20) {
+      meaning = 'Severe Risk';
+    } else {
+      meaning = 'Extreme Risk';
+    }
+
     return {
       value: defectDensity,
       color: 'Red',
-      meaning: 'High Risk',
-      range: '10 to 15',
-      uiColor: '#FF0000' // Red
-    };
-  } else {
-    return {
-      value: defectDensity,
-      color: 'Dark Red',
-      meaning: 'High Risk',
-      range: 'Above 15',
-      uiColor: '#8B0000' // Dark Red
+      meaning: meaning,
+      range: '10 to 20+',
+      uiColor: '#EF4444' // Same as High Risk from Home screen (light theme)
     };
   }
 };
@@ -269,6 +293,7 @@ export const debugDefectDensityCall = async (projectId: number, kloc: number): P
 export default {
   getDefectDensity,
   mapDefectDensityToUI,
+  getDefectDensityColor,
   debugDefectDensityCall,
   DefectDensityError,
 };

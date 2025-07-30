@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TouchableOpacity } from 'react-native';
 import PieChart from 'react-native-pie-chart';
 import { useThemedStyles, useTheme } from '../theme/ThemeContext';
 import { ThemeColors } from '../theme/colors';
+import { DefectTypeData, formatDefectTypeForPieChart, getDefectTypeSummary } from '../api/GetDefectTypePieChart';
 
 interface Defect {
   id: string;
@@ -21,10 +22,21 @@ interface Project {
   description: string;
 }
 
+interface TypeDataItem {
+  value: number;
+  color: string;
+  label: string;
+  percentage?: number;
+}
+
 interface DefectTypeDistributionProps {
   selectedProjectId?: string;
   defects: Defect[];
   projects: Project[];
+  apiData?: DefectTypeData | null;
+  isLoading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 /**
@@ -47,87 +59,76 @@ interface DefectTypeDistributionProps {
 const DefectTypeDistribution: React.FC<DefectTypeDistributionProps> = ({
   selectedProjectId,
   defects,
-  projects
+  projects,
+  apiData,
+  isLoading = false,
+  error,
+  onRetry
 }) => {
   const { isDark } = useTheme();
   const styles = useThemedStyles(createStyles);
   const widthAndHeight = 200;
 
-  // Get defects for the selected project or all defects if no project selected
-  const projectDefects = useMemo(() => {
-    return selectedProjectId
-      ? defects.filter(defect => defect.projectId === selectedProjectId)
-      : defects;
-  }, [defects, selectedProjectId]);
-
-  // Calculate dynamic defect counts by type (memoized for performance)
-  const defectCounts = useMemo(() => {
-    const counts = {
-      functionality: 0,
-      ui: 0,
-      usability: 0,
-      validation: 0,
-      performance: 0,
-      security: 0,
-      other: 0
-    };
-
-    projectDefects.forEach(defect => {
-      // Categorize defects based on title, description, or type field
-      const title = defect.title.toLowerCase();
-      const description = defect.description?.toLowerCase() || '';
-
-      if (title.includes('function') || title.includes('logic') || title.includes('business') ||
-          description.includes('function') || description.includes('logic')) {
-        counts.functionality++;
-      } else if (title.includes('ui') || title.includes('interface') || title.includes('display') ||
-                 title.includes('layout') || description.includes('ui') || description.includes('interface')) {
-        counts.ui++;
-      } else if (title.includes('usability') || title.includes('user experience') || title.includes('ux') ||
-                 description.includes('usability') || description.includes('user experience')) {
-        counts.usability++;
-      } else if (title.includes('validation') || title.includes('input') || title.includes('form') ||
-                 description.includes('validation') || description.includes('input')) {
-        counts.validation++;
-      } else if (title.includes('performance') || title.includes('slow') || title.includes('speed') ||
-                 description.includes('performance') || description.includes('slow')) {
-        counts.performance++;
-      } else if (title.includes('security') || title.includes('auth') || title.includes('permission') ||
-                 description.includes('security') || description.includes('auth')) {
-        counts.security++;
-      } else {
-        counts.other++;
-      }
-    });
-
-    return counts;
-  }, [projectDefects]);
-
-  // Create dynamic type data based on actual defect counts (memoized)
-  const typeData = useMemo(() => {
-    return [
-      { value: defectCounts.functionality, color: '#4285F4', label: 'Functionality' },
-      { value: defectCounts.ui, color: '#00bfae', label: 'UI' },
-      { value: defectCounts.usability, color: '#fbbc05', label: 'Usability' },
-      { value: defectCounts.validation, color: '#ea4335', label: 'Validation' },
-      { value: defectCounts.performance, color: '#9c27b0', label: 'Performance' },
-      { value: defectCounts.security, color: '#ff5722', label: 'Security' },
-      { value: defectCounts.other, color: '#607d8b', label: 'Other' },
-    ].filter(item => item.value > 0); // Only show categories with defects
-  }, [defectCounts]);
+  // Create dynamic type data based on API data only (memoized)
+  const typeData: TypeDataItem[] = useMemo(() => {
+    if (apiData && apiData.defectTypes && apiData.defectTypes.length > 0) {
+      // Use API data
+      return formatDefectTypeForPieChart(apiData).map(item => ({
+        value: item.population,
+        color: item.color,
+        label: item.name,
+        percentage: item.percentage
+      }));
+    } else {
+      // No fallback data - return empty array
+      return [];
+    }
+  }, [apiData]);
 
   // Prepare data for PieChart component
   const series = typeData.map(item => item.value);
   const sliceColor = typeData.map(item => item.color);
 
-  const totalDefects = typeData.reduce((sum, item) => sum + item.value, 0);
-  const mostCommonType = typeData.length > 0 ? typeData.reduce((prev, current) =>
-    prev.value > current.value ? prev : current
-  ) : null;
+  const totalDefects = apiData ? apiData.totalDefectCount : typeData.reduce((sum, item) => sum + item.value, 0);
+  const mostCommonType = apiData
+    ? { label: apiData.mostCommonDefectType, value: apiData.mostCommonDefectCount }
+    : typeData.length > 0 ? typeData.reduce((prev, current) =>
+        prev.value > current.value ? prev : current
+      ) : null;
 
   const calculatePercentage = (value: number) => {
     return totalDefects > 0 ? ((value / totalDefects) * 100).toFixed(1) : '0.0';
   };
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Defect Distribution by Type</Text>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading defect type data...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Show error state
+  if (error && !apiData) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Defect Distribution by Type</Text>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>⚠️ {error}</Text>
+          {onRetry && (
+            <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   // Show message if no defects
   if (totalDefects === 0) {
@@ -148,6 +149,12 @@ const DefectTypeDistribution: React.FC<DefectTypeDistributionProps> = ({
     <View style={styles.container}>
       <Text style={styles.title}>
         Defect Distribution by Type
+        {apiData && (
+          <Text style={styles.apiDataIndicator}> • Live Data</Text>
+        )}
+        {!apiData && (
+          <Text style={styles.localDataIndicator}> • Calculated</Text>
+        )}
         {selectedProjectId && (
           <Text style={styles.projectInfo}>
             {'\n'}({projects.find(p => p.id === selectedProjectId)?.name || 'Selected Project'})
@@ -168,7 +175,7 @@ const DefectTypeDistribution: React.FC<DefectTypeDistributionProps> = ({
           <View key={index} style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: item.color }]} />
             <Text style={styles.legendText}>
-              {item.label}: {item.value} ({calculatePercentage(item.value)}%)
+              {item.label}: {item.value} ({item.percentage ? item.percentage.toFixed(1) : calculatePercentage(item.value)}%)
             </Text>
           </View>
         ))}
@@ -286,6 +293,54 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.text.secondary,
     fontStyle: 'italic',
     marginTop: 2,
+  },
+
+  // Loading and Error States
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    marginLeft: 12,
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.system.red,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  retryButton: {
+    backgroundColor: colors.system.blue,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+
+  // API Data Indicators
+  apiDataIndicator: {
+    fontSize: 12,
+    color: colors.system.green,
+    fontWeight: '500',
+    fontStyle: 'italic',
+  },
+  localDataIndicator: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+    fontWeight: '400',
+    fontStyle: 'italic',
   },
 });
 
